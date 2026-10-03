@@ -27,8 +27,8 @@ public class AppDbContext : DbContext
         {
             s.HasKey(h => h.Id);
             s.Property(h =>h.SeatNumber).HasMaxLength(32).IsRequired();
-            s.Property(h => h.Status).HasMaxLength(32).IsRequired();
-            s.Property(h => h.UserId).HasMaxLength(128).IsRequired();
+            s.Property(h => h.Status).HasMaxLength(32).IsRequired(false);
+            s.Property(h => h.UserId).HasMaxLength(128).IsRequired(false);
 
             s.HasIndex(h => new { h.ShowId, h.SeatNumber }).IsUnique();
             s.HasIndex(h => new { h.ShowId, h.UserId, h.Status }).IsUnique();

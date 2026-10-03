@@ -40,6 +40,7 @@ public class TokenAuthHandler : AuthenticationHandler<TokenAuthenticationSchemeO
         {
             Logger.LogInformation("Admin secret found");
             claims.Add(new Claim(ClaimTypes.NameIdentifier, "admin"));
+            claims.Add(new Claim(ClaimTypes.Role, "Admin"));
         }else if (token.StartsWith("user_"))
         {
             Logger.LogInformation("User found = {Token}", token);
