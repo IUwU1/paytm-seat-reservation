@@ -1,6 +1,7 @@
 using Serilog;
 using Microsoft.EntityFrameworkCore;
 using PaytmReservationSystem.Data;
+using PaytmReservationSystem.Security;
 
 Log.Logger = new  LoggerConfiguration().WriteTo.Console().CreateBootstrapLogger();
 
@@ -15,7 +16,10 @@ try
     
     builder.Services.AddDbContext<AppDbContext>(options =>
         options.UseNpgsql(connectionString));
+    
+    builder.Services.AddAuthentication("Bearer").AddScheme<TokenAuthenticationSchemeOptions,TokenAuthHandler >("Bearer", null);
 
+    builder.Services.AddAuthorization();
     builder.Services.AddControllers();
     builder.Services.AddEndpointsApiExplorer();
 
@@ -35,6 +39,8 @@ try
     
     app.UseHttpsRedirection();
     app.UseSerilogRequestLogging();
+    app.UseAuthentication();
+    app.UseAuthorization();
     app.MapControllers();
     
     app.Run();
