@@ -6,7 +6,7 @@ services:
     container_name: paytm_postgres
     restart: always
     environment:
-      POSTGRES_DB_NAME: seat_reservation_db
+      POSTGRES_DB: seat_reservation_db
       POSTGRES_USER: app_user
       POSTGRES_PASSWORD: app_password
     ports:
@@ -14,23 +14,17 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U app_user -d  seat_reservation_db""]
+      test: ["CMD-SHELL","pg_isready -U app_user -d  seat_reservation_db"]
       interval: 5s
       timeout: 5s
       retries: 5
+      
+  paytmreservationsystem:
+    image: paytmreservationsystem
+    build:
+      context: .
+      dockerfile: src/PaytmReservationSystem/Dockerfile
   
 volumes:
-  pgdata:services:
-  paytmreservationsystem:
-    image: paytmreservationsystem
-    build:
-      context: .
-      dockerfile: src/PaytmReservationSystem/Dockerfile
-
-services:
-  paytmreservationsystem:
-    image: paytmreservationsystem
-    build:
-      context: .
-      dockerfile: src/PaytmReservationSystem/Dockerfile
+  pgdata:
 
