@@ -1,0 +1,6 @@
+@PaytmReservationSystem_HostAddress = http://localhost:5053
+
+GET {{PaytmReservationSystem_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
