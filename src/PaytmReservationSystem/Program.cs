@@ -1,6 +1,7 @@
 using Serilog;
 using Microsoft.EntityFrameworkCore;
 using PaytmReservationSystem.Data;
+using PaytmReservationSystem.Infrastructure;
 using PaytmReservationSystem.Security;
 
 Log.Logger = new  LoggerConfiguration().WriteTo.Console().CreateBootstrapLogger();
@@ -8,8 +9,12 @@ Log.Logger = new  LoggerConfiguration().WriteTo.Console().CreateBootstrapLogger(
 try
 {
     var builder = WebApplication.CreateBuilder(args);
+
+    builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+    builder.Services.AddProblemDetails();
     
     builder.Host.UseSerilog((context, services, configuration) => configuration.ReadFrom.Configuration(context.Configuration).ReadFrom.Services(services).Enrich.FromLogContext().WriteTo.Console());
+    
     
     var connectionString = builder.Configuration.GetConnectionString("defaultConnection");
     Log.Information(connectionString);
@@ -24,6 +29,8 @@ try
     builder.Services.AddEndpointsApiExplorer();
 
     var app = builder.Build();
+
+    app.UseExceptionHandler();
 
     using (var scope = app.Services.CreateScope())
     {
