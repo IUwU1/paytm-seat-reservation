@@ -38,15 +38,13 @@ public class ShowsController : ControllerBase
             PricePaise = request.PricePaise,
             TotalSeats = request.Seats.Count,
         };
-        _logger.LogInformation("Shows {Show}", show);
+        
         var seatEntities = distinctSeats.Select(seatNumber => new Seat
         {
             ShowId = show.Id,
             SeatNumber =  seatNumber,
             Status = SeatStatus.Available,
         }).ToList();
-        _logger.LogInformation("Seats - {Seats}",seatEntities);
-    
         
         _dbContext.Shows.Add(show);
         _dbContext.Seats.AddRange(seatEntities);
@@ -69,16 +67,15 @@ public class ShowsController : ControllerBase
     public async Task<IActionResult> GetShow(Guid id)
     {
         var show = await _dbContext.Shows.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id);
-        _logger.LogInformation("Guid Id show - {ID}", id);
+        
         if (show == null)
         {
             _logger.LogError("Show {ShowId} does not exist", id);
             return NotFound();
         }
-        
-        var seats = await _dbContext.Seats.AsNoTracking().Where(s => s.ShowId == show.Id).OrderBy(s => s.SeatNumber).ToListAsync();
-        
-        _logger.LogInformation("Seats {Seats}", seats);
+
+        var seats = await _dbContext.Seats.AsNoTracking().Where(s => s.ShowId == show.Id).OrderBy(s => s.SeatNumber)
+            .ToListAsync();
         
         Dictionary <string, int> seatDistributionCount = new Dictionary<string, int>
         {
@@ -87,11 +84,8 @@ public class ShowsController : ControllerBase
             { SeatStatus.Confirmed, seats.Count(s => s.Status == SeatStatus.Confirmed) }
         };
         
-        _logger.LogInformation("Seat Distribution count {SeatCount}", seatDistributionCount.Values.Sum());
-        
         var response = new ShowResponse(
             show.Id,show.Name, show.PricePaise,show.TotalSeats,seatDistributionCount,seats.Select(s => new SeatDTO(s.SeatNumber, s.Status)).ToList());
-        
         
         return Ok(response);
     }

@@ -50,10 +50,8 @@ public class ReservationController : ControllerBase
 
         if (idempotency != null)
         {
-            _logger.LogInformation("--- IDEMPOTENCY IS NOT NULL--- {Idempotency}",idempotency.RequestHash);
             if (idempotency.RequestHash == requestHash)
             {
-                _logger.LogInformation("--- IDEMPOTENCY IS OK --- Cache Response for- {Hash} ",idempotency.RequestHash );
                 var cachedResponse = JsonSerializer.Deserialize<ReserveSeatsResponse>(idempotency.ResponseBody);
                 return Ok(cachedResponse);
             }
@@ -79,36 +77,10 @@ public class ReservationController : ControllerBase
         var amountPaise = show.PricePaise * sortedSeats.Count;
         var responseObj = new ReserveSeatsResponse(reservationId, showId, userId, sortedSeats, amountPaise, ReservationStatus.Confirmed);
 
-        // var reservation = new Reservation
-        // {
-        //     Id = reservationId,
-        //     UserId = userId,
-        //     SeatCount = sortedSeats.Count,
-        //     AmountPaise = amountPaise,
-        //     Status = ReservationStatus.Confirmed
-        // };
-        //
-        // _dbContext.Reservations.Add(reservation);
-        
         await _dbContext.Database.ExecuteSqlRawAsync(@"
                 INSERT INTO ""Reservations"" (""Id"", ""ShowId"", ""UserId"", ""SeatCount"", ""AmountPaise"", ""Status"", ""CreatedAt"")
                 VALUES ({0}, {1}, {2}, {3}, {4}, {5}, NOW());",
             reservationId, showId, userId, sortedSeats.Count, amountPaise, ReservationStatus.Confirmed);
-        
-        
-
-        // var idempotencyRecord = new IdempotencyRecord
-        // {
-        //     UserId = userId,
-        //     IdempotencyKey = request.IdempotencyKey,
-        //     RequestHash = requestHash,
-        //     StatusCode = StatusCodes.Status201Created,
-        //     ResponseBody = JsonSerializer.Serialize(responseObj)
-        // };
-        //
-        // _dbContext.IdempotencyRecords.Add(idempotencyRecord);
-        
-       // await _dbContext.SaveChangesAsync();
        
        await _dbContext.Database.ExecuteSqlRawAsync(@"
                 INSERT INTO ""IdempotencyRecords"" (""UserId"", ""IdempotencyKey"", ""RequestHash"", ""StatusCode"", ""ResponseBody"", ""CreatedAt"")
@@ -150,7 +122,7 @@ public class ReservationController : ControllerBase
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
-    [HttpPost("{id}/cancel")]
+    [HttpPost("/reservations/{id}/cancel")]
     public async Task<IActionResult> CancelReservation([FromRoute] Guid id)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -190,8 +162,11 @@ public class ReservationController : ControllerBase
         );
 
         await _dbContext.SaveChangesAsync();
-        await transaction.CommitAsync();
+
+        MetricsRegistry.SeatsAvailable.WithLabels(reservation.ShowId.ToString()).Inc(reservation.SeatCount);
         
+        await transaction.CommitAsync();
+        _logger.LogInformation("Changes saved to Database");
         return Ok(new CancelReservationResponse(id, ReservationStatus.Cancelled));
 
     }
