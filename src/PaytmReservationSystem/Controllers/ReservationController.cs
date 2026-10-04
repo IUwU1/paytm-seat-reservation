@@ -42,38 +42,79 @@ public class ReservationController : ControllerBase
         
         var sortedSeats = request.Seats.Distinct().OrderBy(s => s).ToList();
         var requestHash = ComputeSha256(string.Join(",", sortedSeats));
-        
-        await using var transaction = await _dbContext.Database.BeginTransactionAsync();
-        
-        var show = await _dbContext.Shows.FirstOrDefaultAsync(s => s.Id == showId);
-        if (show == null) return NotFound(new { reason = "show_not_found" });
+        try
+        {
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync();
         
         var idempotency = await _dbContext.IdempotencyRecords.FirstOrDefaultAsync(i => i.UserId == userId && i.IdempotencyKey == request.IdempotencyKey) ;
 
         if (idempotency != null)
         {
+            _logger.LogInformation("--- IDEMPOTENCY IS NOT NULL--- {Idempotency}",idempotency.RequestHash);
             if (idempotency.RequestHash == requestHash)
             {
+                _logger.LogInformation("--- IDEMPOTENCY IS OK --- Cache Response for- {Hash} ",idempotency.RequestHash );
                 var cachedResponse = JsonSerializer.Deserialize<ReserveSeatsResponse>(idempotency.ResponseBody);
-                return StatusCode(idempotency.StatusCode, cachedResponse);
+                return Ok(cachedResponse);
             }
             MetricsRegistry.ReservationsDeclinedTotal.WithLabels("idempotentcy_key_replay").Inc();
             return Conflict(new { reason = "idempotentcy_key_replay" });
         }
-
+        
         var lockKey = $"res_{showId}_{userId}";
         await _dbContext.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(hashtext({0}));", lockKey);
         
         var currentSeatCount = await _dbContext.Seats.CountAsync(s => s.ShowId == showId && s.UserId == userId && s.Status != SeatStatus.Available);
-
+        
         if (currentSeatCount + sortedSeats.Count > 4)
         {
             MetricsRegistry.ReservationsDeclinedTotal.WithLabels("ticket_limit_exceeded").Inc();
             return Conflict(new { reason = "ticket_limit_exceeded" });
         }
         
+        var show = await _dbContext.Shows.FirstOrDefaultAsync(s => s.Id == showId);
+        if (show == null) return NotFound(new { reason = "show_not_found" });
+        
         var reservationId = Guid.NewGuid();
+        var amountPaise = show.PricePaise * sortedSeats.Count;
+        var responseObj = new ReserveSeatsResponse(reservationId, showId, userId, sortedSeats, amountPaise, ReservationStatus.Confirmed);
 
+        // var reservation = new Reservation
+        // {
+        //     Id = reservationId,
+        //     UserId = userId,
+        //     SeatCount = sortedSeats.Count,
+        //     AmountPaise = amountPaise,
+        //     Status = ReservationStatus.Confirmed
+        // };
+        //
+        // _dbContext.Reservations.Add(reservation);
+        
+        await _dbContext.Database.ExecuteSqlRawAsync(@"
+                INSERT INTO ""Reservations"" (""Id"", ""ShowId"", ""UserId"", ""SeatCount"", ""AmountPaise"", ""Status"", ""CreatedAt"")
+                VALUES ({0}, {1}, {2}, {3}, {4}, {5}, NOW());",
+            reservationId, showId, userId, sortedSeats.Count, amountPaise, ReservationStatus.Confirmed);
+        
+        
+
+        // var idempotencyRecord = new IdempotencyRecord
+        // {
+        //     UserId = userId,
+        //     IdempotencyKey = request.IdempotencyKey,
+        //     RequestHash = requestHash,
+        //     StatusCode = StatusCodes.Status201Created,
+        //     ResponseBody = JsonSerializer.Serialize(responseObj)
+        // };
+        //
+        // _dbContext.IdempotencyRecords.Add(idempotencyRecord);
+        
+       // await _dbContext.SaveChangesAsync();
+       
+       await _dbContext.Database.ExecuteSqlRawAsync(@"
+                INSERT INTO ""IdempotencyRecords"" (""UserId"", ""IdempotencyKey"", ""RequestHash"", ""StatusCode"", ""ResponseBody"", ""CreatedAt"")
+                VALUES ({0}, {1}, {2}, {3}, {4}, NOW());",
+           userId, request.IdempotencyKey, requestHash, StatusCodes.Status201Created, JsonSerializer.Serialize(responseObj));
+        
         var updatedRows = await _dbContext.Seats.Where(s =>
                 s.ShowId == showId && sortedSeats.Contains(s.SeatNumber) && s.Status == SeatStatus.Available)
             .ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, SeatStatus.Confirmed)
@@ -87,39 +128,18 @@ public class ReservationController : ControllerBase
             return Conflict(new { reason = "some_seat_taken" });
         }
         
-        var amountPaise = show.PricePaise * sortedSeats.Count;
-
-        var reservation = new Reservation
-        {
-            Id = reservationId,
-            UserId = userId,
-            SeatCount = sortedSeats.Count,
-            AmountPaise = amountPaise,
-            Status = ReservationStatus.Confirmed
-        };
-        
-        _dbContext.Reservations.Add(reservation);
-        
-        var responseObj = new ReserveSeatsResponse(reservationId, showId, userId, sortedSeats, amountPaise, ReservationStatus.Confirmed);
-
-        var idempotencyRecord = new IdempotencyRecord
-        {
-            UserId = userId,
-            IdempotencyKey = request.IdempotencyKey,
-            RequestHash = requestHash,
-            StatusCode = StatusCodes.Status201Created,
-            ResponseBody = JsonSerializer.Serialize(responseObj)
-        };
-        
-        _dbContext.IdempotencyRecords.Add(idempotencyRecord);
-        
-        await _dbContext.SaveChangesAsync();
         await transaction.CommitAsync();
         
         MetricsRegistry.SeatsAvailable.WithLabels(showId.ToString()).Dec(sortedSeats.Count);
         MetricsRegistry.ReservationsConfirmedTotal.Inc(sortedSeats.Count);
         
         return Created($"/shows/{showId}", responseObj);
+        }catch (Exception)
+        {
+          
+            return Conflict(new { reason = "seat_taken", message = "High contention. Please retry." });
+        }
+        
 
 
     }
