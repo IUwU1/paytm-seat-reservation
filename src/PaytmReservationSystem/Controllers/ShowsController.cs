@@ -12,12 +12,10 @@ namespace PaytmReservationSystem.Controllers;
 [Route("[controller]")]
 public class ShowsController : ControllerBase
 {
-    private readonly ILogger<ShowsController> _logger;
     private readonly AppDbContext _dbContext;
     
-    public ShowsController(ILogger<ShowsController> logger, AppDbContext dbContext)
+    public ShowsController(AppDbContext dbContext)
     {
-        _logger = logger;
         _dbContext = dbContext;
     }
 
@@ -28,7 +26,6 @@ public class ShowsController : ControllerBase
         var distinctSeats = request.Seats.Distinct().ToList();
         if (distinctSeats.Count != request.Seats.Count)
         {
-            _logger.LogError("Invalid number of seats counted seats - {DistinctSeatsCount}, request - {SeatsCount}", distinctSeats.Count, request.Seats.Count);
             return BadRequest("Duplicate seat numbers provided");
         }
 
@@ -51,7 +48,6 @@ public class ShowsController : ControllerBase
         
         await  _dbContext.SaveChangesAsync();
         
-        _logger.LogInformation("Changes saved to Db Context");
         MetricsRegistry.SeatsAvailable.WithLabels(show.Id.ToString()).Set(distinctSeats.Count);
         
         return Created($"/shows/{show.Id}", new
@@ -64,13 +60,13 @@ public class ShowsController : ControllerBase
     }
 
     [HttpGet("{id}")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetShow(Guid id)
     {
         var show = await _dbContext.Shows.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id);
         
         if (show == null)
         {
-            _logger.LogError("Show {ShowId} does not exist", id);
             return NotFound();
         }
 

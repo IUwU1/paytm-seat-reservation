@@ -39,4 +39,4 @@ If I were to extend this service for production, I would implement:
 ## Run the Burst Test
 The repository includes a one-command burst script that simulates a hot-seat storm, limit bypassing, and idempotent retries.
 ```bash
-./burst.sh <DEPLOYMENT_URL>
+./Burst.sh https://paytm-seat-reservation-production-84ff.up.railway.app

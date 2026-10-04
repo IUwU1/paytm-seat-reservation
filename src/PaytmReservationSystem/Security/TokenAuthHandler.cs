@@ -21,16 +21,14 @@ public class TokenAuthHandler : AuthenticationHandler<TokenAuthenticationSchemeO
     {
         if (!Request.Headers.TryGetValue("Authorization", out var authHeader))
         {
-            Logger.LogError("No Authorization header found");
             return Task.FromResult(AuthenticateResult.Fail("Missing Authentication Header"));
         }
         
        
-        var token = authHeader.ToString().Replace("Bearer ", "").Trim();
+        var token = authHeader.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim().ToLowerInvariant();
 
         if (string.IsNullOrEmpty(token))
         {
-            Logger.LogError("No Authorization header found");
             return Task.FromResult(AuthenticateResult.Fail("Invalid Token"));
         }
 
@@ -38,12 +36,10 @@ public class TokenAuthHandler : AuthenticationHandler<TokenAuthenticationSchemeO
 
         if (token == "admin_secret")
         {
-            Logger.LogInformation("Admin secret found");
             claims.Add(new Claim(ClaimTypes.NameIdentifier, "admin"));
             claims.Add(new Claim(ClaimTypes.Role, "Admin"));
         }else if (token.StartsWith("user_"))
         {
-            Logger.LogInformation("User found = {Token}", token);
             claims.Add(new Claim(ClaimTypes.NameIdentifier,token));
             claims.Add(new Claim(ClaimTypes.Role,"User"));
         }

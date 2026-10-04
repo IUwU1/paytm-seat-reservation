@@ -17,12 +17,10 @@ namespace PaytmReservationSystem.Controllers;
 [Authorize]
 public class ReservationController : ControllerBase
 {
-    private readonly ILogger<ShowsController> _logger;
     private readonly AppDbContext _dbContext;
     
-    public ReservationController(AppDbContext dbContext, ILogger<ShowsController> logger)
+    public ReservationController(AppDbContext dbContext)
     {
-        _logger = logger;
         _dbContext = dbContext;
     }
 
@@ -55,8 +53,8 @@ public class ReservationController : ControllerBase
                 var cachedResponse = JsonSerializer.Deserialize<ReserveSeatsResponse>(idempotency.ResponseBody);
                 return Ok(cachedResponse);
             }
-            MetricsRegistry.ReservationsDeclinedTotal.WithLabels("idempotentcy_key_replay").Inc();
-            return Conflict(new { reason = "idempotentcy_key_replay" });
+            MetricsRegistry.ReservationsDeclinedTotal.WithLabels("idempotent_replay_mismatch").Inc();
+            return Conflict(new { reason = "idempotent_replay_mismatch" });
         }
         
         var lockKey = $"res_{showId}_{userId}";
@@ -128,26 +126,22 @@ public class ReservationController : ControllerBase
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrEmpty(userId))
         {
-            _logger.LogError("Empty user id" );
             return Unauthorized();
         }
         
         var reservation = await _dbContext.Reservations.FirstOrDefaultAsync(r =>r.Id == id);
         if (reservation == null)
         {
-            _logger.LogError("Reservation not found");
             return NotFound();
         }
 
         if (reservation.UserId != userId)
         {
-            _logger.LogError("User not authorized");
             return Forbid();
         }
 
         if (reservation.Status == ReservationStatus.Cancelled)
         {
-            _logger.LogInformation("Reservation was cancelled");
             return Ok(new CancelReservationResponse(id, ReservationStatus.Cancelled));
         }
 
@@ -166,7 +160,6 @@ public class ReservationController : ControllerBase
         MetricsRegistry.SeatsAvailable.WithLabels(reservation.ShowId.ToString()).Inc(reservation.SeatCount);
         
         await transaction.CommitAsync();
-        _logger.LogInformation("Changes saved to Database");
         return Ok(new CancelReservationResponse(id, ReservationStatus.Cancelled));
 
     }

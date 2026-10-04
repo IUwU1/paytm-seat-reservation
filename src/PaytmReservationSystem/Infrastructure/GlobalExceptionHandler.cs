@@ -6,7 +6,6 @@ namespace PaytmReservationSystem.Infrastructure;
 
 public class GlobalExceptionHandler : IExceptionHandler
 {
-    
     private readonly ILogger<GlobalExceptionHandler> _logger;
 
     public GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger)
@@ -16,24 +15,23 @@ public class GlobalExceptionHandler : IExceptionHandler
     
     public async ValueTask<bool> TryHandleAsync(HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
-        _logger.LogError(exception, "Unhandled exception GlobalExceptionHandler");
+        _logger.LogError(exception, "Unhandled exception caught by GlobalExceptionHandler");
 
-        //check errors then tackle 409s...
-        var response = new { message = exception.Message, excep = exception.ToString() };
-        var statusCode = StatusCodes.Status409Conflict;
+        var statusCode = StatusCodes.Status500InternalServerError;
+        var responseMessage = "An unexpected error occurred. Please try again later.";
 
         if (exception is TimeoutException or NpgsqlException)
         {
             statusCode = StatusCodes.Status429TooManyRequests;
-            response = new { message = exception.Message, excep = exception.ToString() };
+            responseMessage = "The system is currently under heavy load. Please try again.";
         }
+        
+        var response = new { message = responseMessage };
         
         httpContext.Response.StatusCode = statusCode;
         httpContext.Response.ContentType = "application/json";
         await httpContext.Response.WriteAsync(JsonSerializer.Serialize(response), cancellationToken);
         
-        _logger.LogError(exception, "Unhandled exception GlobalExceptionHandler");
-
         return true;
     }
 }

@@ -20,20 +20,69 @@ async def bounded_request(sem, client, method, url, headers=None, json_data=None
         return await make_request(client, method, url, headers, json_data)
 
 async def main():
-    base_url = sys.argv[1] if len(sys.argv) > 1 else "https://paytm-seat-reservation-production-84ff.up.railway.app"
+    base_url = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5053"
     print(f"🚀 Starting Paytm Burst Test against {base_url}...\n")
     
     sem = asyncio.Semaphore(1000)
     
-    # Increased timeout to handle queueing on the free-tier cloud instance
     async with httpx.AsyncClient(timeout=60.0) as client:
+        
+        # ==========================================
+        # PHASE 1: BASIC ENDPOINT FUNCTIONAL TESTS
+        # ==========================================
+        print("🛠️ PHASE 1: Basic Endpoint Functional Tests")
+        
+        # 1. Test POST /shows
+        print("   -> Testing POST /shows (Admin)...", end=" ")
+        status, func_show = await make_request(
+            client, "POST", f"{base_url}/shows", 
+            {"Authorization": "Bearer admin_secret"}, 
+            {"name": "functional-test-show", "seats": ["T1", "T2"], "price_paise": 15000}
+        )
+        assert status == 201, f"❌ Failed: {status} {func_show}"
+        func_show_id = func_show["id"]
+        print("✅ Passed")
+
+        # 2. Test GET /shows/{id}
+        print("   -> Testing GET /shows/{id} (Public)...", end=" ")
+        status, get_show = await make_request(client, "GET", f"{base_url}/shows/{func_show_id}")
+        assert status == 200, f"❌ Failed: {status}"
+        assert get_show["name"] == "functional-test-show", "❌ Failed: Name mismatch"
+        print("✅ Passed")
+
+        # 3. Test POST /shows/{id}/reserve (Testing Mixed-Case Auth Header)
+        print("   -> Testing POST /shows/{id}/reserve (User)...", end=" ")
+        status, reserve_resp = await make_request(
+            client, "POST", f"{base_url}/shows/{func_show_id}/reserve",
+            {"Authorization": "Bearer User_FuncTest"}, 
+            {"seats": ["T1"], "idempotency_key": str(uuid.uuid4())}
+        )
+        assert status == 201, f"❌ Failed: {status} {reserve_resp}"
+        func_res_id = reserve_resp["reservation_id"]
+        print("✅ Passed")
+
+        # 4. Test POST /reservations/{id}/cancel (Testing Lower-Case Auth Header)
+        print("   -> Testing POST /reservations/{id}/cancel (User)...", end=" ")
+        status, cancel_resp = await make_request(
+            client, "POST", f"{base_url}/reservations/{func_res_id}/cancel",
+            {"Authorization": "Bearer user_functest"} 
+        )
+        assert status == 200, f"❌ Failed: {status} {cancel_resp}"
+        print("✅ Passed\n")
+
+
+        # ==========================================
+        # PHASE 2: HIGH-CONCURRENCY & BUSINESS LOGIC
+        # ==========================================
+        print("🔥 PHASE 2: High-Concurrency & Business Logic Tests\n")
+
         # 1. Create Show
         seats = [f"A{i}" for i in range(1, 501)]
         
         status, show = await make_request(
             client, "POST", f"{base_url}/shows", 
             {"Authorization": "Bearer admin_secret"}, 
-            {"name": "test-burst", "seats": seats, "pricePaise": 10000}
+            {"name": "test-burst", "seats": seats, "price_paise": 10000}
         )
         
         if status != 201:
@@ -115,29 +164,56 @@ async def main():
         status, response = await make_request(
             client, "POST", f"{base_url}/shows/{show_id}/reserve",
             {"Authorization": "Bearer user_retry"},
-            {"seats": ["A21"], "idempotency_key": idem_key}  # Same key, different seat
+            {"seats": ["A21"], "idempotency_key": idem_key} 
         )
                 
         print(f"📊 Mismatch Outcome: {status} {response}")
         assert status == 409, f"❌ FAILED: Expected 409 Conflict for mismatched body, got {status}"
-        assert response.get("reason") == "idempotentcy_key_replay", "❌ FAILED: Incorrect decline reason"
+        assert response.get("reason") == "idempotent_replay_mismatch", "❌ FAILED: Incorrect decline reason"
         print("✅ Idempotency Mismatch Passed!\n")
 
-        # 6. Invariant & State Check
-        print("🔍 Checking final state invariant...")
+        # 6. Scenario G: Transactional Rollback (Partial Availability)
+        print("🛑 Firing Transactional Rollback Test (Requesting batch A50-A53, but A52 is taken)...")
+        # Pre-book seat A52
+        status, _ = await make_request(
+            client, "POST", f"{base_url}/shows/{show_id}/reserve",
+            {"Authorization": "Bearer user_prebook"},
+            {"seats": ["A52"], "idempotency_key": str(uuid.uuid4())}
+        )
+        assert status == 201, f"❌ FAILED: Could not pre-book seat A52. Got {status}"
+
+        # Attempt to book batch including the taken seat
+        status, response = await make_request(
+            client, "POST", f"{base_url}/shows/{show_id}/reserve",
+            {"Authorization": "Bearer user_batchfail"},
+            {"seats": ["A50", "A51", "A52", "A53"], "idempotency_key": str(uuid.uuid4())}
+        )
+        assert status == 409, f"❌ FAILED: Expected 409 Conflict, got {status}"
+        
+        # Verify no partial bookings occurred
+        _, show_state = await make_request(client, "GET", f"{base_url}/shows/{show_id}", {})
+        seat_status = {s["seatNumber"]: s["status"].lower() for s in show_state.get("seats", [])}
+        
+        assert seat_status.get("A50") == "available", "❌ FAILED: Seat A50 was partially booked!"
+        assert seat_status.get("A51") == "available", "❌ FAILED: Seat A51 was partially booked!"
+        assert seat_status.get("A53") == "available", "❌ FAILED: Seat A53 was partially booked!"
+        print("✅ Transactional Rollback Passed! No partial bookings occurred.\n")
+
+        # 7. Invariant & State Check
+        print("🔍 Checking current state invariant...")
         status, state = await make_request(client, "GET", f"{base_url}/shows/{show_id}", {})
         counts = state.get("counts", {})
         available = counts.get("available", 0)
         confirmed = counts.get("confirmed", 0)
         total = state.get("total_seats", 0)
         
-        print(f"📊 Final State: {counts}")
+        print(f"📊 Current State: {counts}")
         if available + confirmed == total:
             print("✅ INVARIANT HOLDS: available + confirmed == total_seats")
         else:
             print("❌ INVARIANT BROKEN!")
         
-        # 7. Cancellation & Rebooking
+        # 8. Cancellation & Rebooking
         print("🗑️ Firing Cancellation & Re-booking Test...")
         
         _, show_state = await make_request(client, "GET", f"{base_url}/shows/{show_id}", {})
@@ -147,7 +223,7 @@ async def main():
         # Pick from the end of the array to avoid seats the other tests might have touched
         cancel_seat = available_seats[-1] 
         
-        # 1. User A books a seat
+        # User A books a seat
         cancel_idem = str(uuid.uuid4())
         status, book_resp = await make_request(
             client, "POST", f"{base_url}/shows/{show_id}/reserve",
@@ -158,7 +234,7 @@ async def main():
         assert status == 201, f"Failed to book seat {cancel_seat} for cancel test. Got {status}"
         reservation_id = book_resp["reservation_id"]
 
-        # 2. User B tries to cancel User A's reservation (Spoofing Identity Test)
+        # User B tries to cancel User A's reservation (Spoofing Identity Test)
         status, _ = await make_request(
             client, "POST", f"{base_url}/reservations/{reservation_id}/cancel",
             {"Authorization": "Bearer user_cancelb"},
@@ -167,7 +243,7 @@ async def main():
         
         assert status in (401, 403, 404, 409), f"❌ FAILED: User B was able to cancel User A's reservation! Got {status}"
 
-        # 3. User A successfully cancels their own reservation
+        # User A successfully cancels their own reservation
         status, cancel_resp = await make_request(
             client, "POST", f"{base_url}/reservations/{reservation_id}/cancel",
             {"Authorization": "Bearer user_cancela"}, 
@@ -176,7 +252,7 @@ async def main():
         
         assert status == 200, f"❌ FAILED: User A could not cancel their own reservation! Got {status}"
 
-        # 4. User B successfully re-books the now-released seat
+        # User B successfully re-books the now-released seat
         status, _ = await make_request(
             client, "POST", f"{base_url}/shows/{show_id}/reserve",
             {"Authorization": "Bearer user_cancelb"}, 
@@ -186,8 +262,8 @@ async def main():
         assert status == 201, f"❌ FAILED: Released seat was not cleanly re-bookable! Got {status}"
         print("✅ Cancellation & Re-booking Passed!\n")
         
-        # 8. Reconciliation
-        print("⚖️ Checking Reconciliation Invariant...")
+        # 9. Reconciliation
+        print("⚖️ Checking Final Reconciliation Invariant...")
         
         status, show_state = await make_request(client, "GET", f"{base_url}/shows/{show_id}",{})
         assert status == 200, "❌ FAILED: Could not fetch show state"

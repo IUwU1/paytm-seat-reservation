@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Serilog;
 using Microsoft.EntityFrameworkCore;
 using PaytmReservationSystem.Data;
@@ -62,18 +63,17 @@ try
     app.MapControllers();
 
     app.UseHttpMetrics();
-    app.MapMetrics();
+    app.MapMetrics().AllowAnonymous();
     
-    //for checking if the host is running
     app.MapHealthChecks("/health/liveness", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
     {
         Predicate = _ => false 
-    });
+    }).AllowAnonymous();
     
     app.MapHealthChecks("/health/readiness", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
     {
-        Predicate = check => check.Tags.Contains("ready") // Checks database connectivity
-    });
+        Predicate = check => check.Tags.Contains("ready") 
+    }).AllowAnonymous();
     
     app.Run();
 }
