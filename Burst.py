@@ -25,7 +25,10 @@ async def main():
     
     sem = asyncio.Semaphore(1000)
     
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    run_id = str(uuid.uuid4())[:8]
+    
+    # Increased timeout to 120 seconds to allow cloud queues to drain properly
+    async with httpx.AsyncClient(timeout=120.0) as client:
         
         # ==========================================
         # PHASE 1: BASIC ENDPOINT FUNCTIONAL TESTS
@@ -37,7 +40,7 @@ async def main():
         status, func_show = await make_request(
             client, "POST", f"{base_url}/shows", 
             {"Authorization": "Bearer admin_secret"}, 
-            {"name": "functional-test-show", "seats": ["T1", "T2"], "price_paise": 15000}
+            {"name": f"functional-test-{run_id}", "seats": ["T1", "T2"], "price_paise": 15000}
         )
         assert status == 201, f"❌ Failed: {status} {func_show}"
         func_show_id = func_show["id"]
@@ -47,15 +50,18 @@ async def main():
         print("   -> Testing GET /shows/{id} (Public)...", end=" ")
         status, get_show = await make_request(client, "GET", f"{base_url}/shows/{func_show_id}")
         assert status == 200, f"❌ Failed: {status}"
-        assert get_show["name"] == "functional-test-show", "❌ Failed: Name mismatch"
+        assert get_show["name"] == f"functional-test-{run_id}", "❌ Failed: Name mismatch"
         print("✅ Passed")
+
+        func_user = f"User_FuncTest_{run_id}"
+        func_idem = str(uuid.uuid4())
 
         # 3. Test POST /shows/{id}/reserve (Testing Mixed-Case Auth Header)
         print("   -> Testing POST /shows/{id}/reserve (User)...", end=" ")
         status, reserve_resp = await make_request(
             client, "POST", f"{base_url}/shows/{func_show_id}/reserve",
-            {"Authorization": "Bearer User_FuncTest"}, 
-            {"seats": ["T1"], "idempotency_key": str(uuid.uuid4())}
+            {"Authorization": f"Bearer {func_user}"}, 
+            {"seats": ["T1"], "idempotency_key": func_idem}
         )
         assert status == 201, f"❌ Failed: {status} {reserve_resp}"
         func_res_id = reserve_resp["reservation_id"]
@@ -65,7 +71,7 @@ async def main():
         print("   -> Testing POST /reservations/{id}/cancel (User)...", end=" ")
         status, cancel_resp = await make_request(
             client, "POST", f"{base_url}/reservations/{func_res_id}/cancel",
-            {"Authorization": "Bearer user_functest"} 
+            {"Authorization": f"Bearer {func_user.lower()}"} 
         )
         assert status == 200, f"❌ Failed: {status} {cancel_resp}"
         print("✅ Passed\n")
@@ -82,7 +88,7 @@ async def main():
         status, show = await make_request(
             client, "POST", f"{base_url}/shows", 
             {"Authorization": "Bearer admin_secret"}, 
-            {"name": "test-burst", "seats": seats, "price_paise": 10000}
+            {"name": f"test-burst-{run_id}", "seats": seats, "price_paise": 10000}
         )
         
         if status != 201:
@@ -99,7 +105,7 @@ async def main():
         for i in range(TOTAL_HOT_SEAT_REQUESTS):
             tasks.append(bounded_request(
                 sem, client, "POST", f"{base_url}/shows/{show_id}/reserve",
-                {"Authorization": f"Bearer user_{i}"},
+                {"Authorization": f"Bearer user_{run_id}_{i}"},
                 {"seats": ["A1"], "idempotency_key": str(uuid.uuid4())}
             ))
         
@@ -125,7 +131,7 @@ async def main():
         for i in range(10):
             tasks.append(bounded_request(
                 sem, client, "POST", f"{base_url}/shows/{show_id}/reserve",
-                {"Authorization": "Bearer user_greedy"},
+                {"Authorization": f"Bearer user_greedy_{run_id}"},
                 {"seats": [f"A{i+2}"], "idempotency_key": str(uuid.uuid4())}
             ))
         
@@ -138,10 +144,11 @@ async def main():
         # 4. Scenario C: Idempotent Retries
         print("🔁 Firing Idempotency Test (10 identical requests simultaneously)...")
         idem_key = str(uuid.uuid4())
+        retry_user = f"Bearer user_retry_{run_id}"
         tasks = [
             bounded_request(
                 sem, client, "POST", f"{base_url}/shows/{show_id}/reserve",
-                {"Authorization": "Bearer user_retry"},
+                {"Authorization": retry_user},
                 {"seats": ["A20"], "idempotency_key": idem_key}
             ) for _ in range(10)
         ]
@@ -163,7 +170,7 @@ async def main():
         print("🕵️ Firing Idempotency Mismatch Test (Same Key, Different Seats)...")
         status, response = await make_request(
             client, "POST", f"{base_url}/shows/{show_id}/reserve",
-            {"Authorization": "Bearer user_retry"},
+            {"Authorization": retry_user},
             {"seats": ["A21"], "idempotency_key": idem_key} 
         )
                 
@@ -177,7 +184,7 @@ async def main():
         # Pre-book seat A52
         status, _ = await make_request(
             client, "POST", f"{base_url}/shows/{show_id}/reserve",
-            {"Authorization": "Bearer user_prebook"},
+            {"Authorization": f"Bearer user_prebook_{run_id}"},
             {"seats": ["A52"], "idempotency_key": str(uuid.uuid4())}
         )
         assert status == 201, f"❌ FAILED: Could not pre-book seat A52. Got {status}"
@@ -185,7 +192,7 @@ async def main():
         # Attempt to book batch including the taken seat
         status, response = await make_request(
             client, "POST", f"{base_url}/shows/{show_id}/reserve",
-            {"Authorization": "Bearer user_batchfail"},
+            {"Authorization": f"Bearer user_batchfail_{run_id}"},
             {"seats": ["A50", "A51", "A52", "A53"], "idempotency_key": str(uuid.uuid4())}
         )
         assert status == 409, f"❌ FAILED: Expected 409 Conflict, got {status}"
@@ -225,9 +232,12 @@ async def main():
         
         # User A books a seat
         cancel_idem = str(uuid.uuid4())
+        user_cancela = f"Bearer user_cancela_{run_id}"
+        user_cancelb = f"Bearer user_cancelb_{run_id}"
+        
         status, book_resp = await make_request(
             client, "POST", f"{base_url}/shows/{show_id}/reserve",
-            {"Authorization": "Bearer user_cancela"},
+            {"Authorization": user_cancela},
             {"seats": [cancel_seat], "idempotency_key": cancel_idem}
         )
         
@@ -237,7 +247,7 @@ async def main():
         # User B tries to cancel User A's reservation (Spoofing Identity Test)
         status, _ = await make_request(
             client, "POST", f"{base_url}/reservations/{reservation_id}/cancel",
-            {"Authorization": "Bearer user_cancelb"},
+            {"Authorization": user_cancelb},
             {}
         )
         
@@ -246,7 +256,7 @@ async def main():
         # User A successfully cancels their own reservation
         status, cancel_resp = await make_request(
             client, "POST", f"{base_url}/reservations/{reservation_id}/cancel",
-            {"Authorization": "Bearer user_cancela"}, 
+            {"Authorization": user_cancela}, 
             {}
         )
         
@@ -255,7 +265,7 @@ async def main():
         # User B successfully re-books the now-released seat
         status, _ = await make_request(
             client, "POST", f"{base_url}/shows/{show_id}/reserve",
-            {"Authorization": "Bearer user_cancelb"}, 
+            {"Authorization": user_cancelb}, 
             {"seats": [cancel_seat], "idempotency_key": str(uuid.uuid4())}
         )
         
