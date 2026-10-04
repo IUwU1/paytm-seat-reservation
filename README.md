@@ -47,21 +47,36 @@ The architecture was heavily validated against a custom asynchronous Python load
 
 ---
 
-## 🛠 For Evaluators: Running the Project
+## For Evaluators: Running the Project
 
-The system adheres to 12-Factor App methodology. The `Dockerfile` is completely environment-agnostic, allowing the system to run seamlessly locally or in the cloud.
+##  Testing the Live Cloud Deployment
+## The system is currently deployed on Railway.app, utilizing public TCP proxy routing to the database and strict Npgsql connection pooling limits to shed load gracefully during extreme spikes.
 
-### Option A: Instant Local Setup (Docker Compose)
-You can spin up the entire architecture locally with a single command. The API will automatically wait for PostgreSQL to boot and will self-apply Entity Framework migrations on startup.
+The `Burst.sh` script is self-healing: it will automatically create an isolated Python virtual environment, install the required dependencies (`httpx`), and execute the test suite without requiring manual setup.
 
-
-
-# Testing the Live Cloud Deployment
-# The system is currently deployed on Railway.app, utilizing public TCP proxy routing to the database and strict Npgsql connection pooling limits to shed load gracefully during extreme spikes.
 ```bash
+# Clone the repository
+git clone https://github.com/IUwU1/paytm-seat-reservation.git
+cd paytm-seat-reservation
+```
+
+```bash
+# Ensure the script has execution permissions (Mac/Linux)
+chmod +x Burst.sh
+
 # Execute the concurrency test against the live cloud deployment
+./Burst.sh https://paytm-seat-reservation-production-84ff.up.railway.app
+````
+
+```bash
+#OR execute the concurrency test against the live cloud deployment directly through the python file
 python Burst.py https://paytm-seat-reservation-production-84ff.up.railway.app
 ```
+---
+
+##  Instant Local Setup (Docker Compose)
+You can spin up the entire architecture locally with a single command. The API will automatically wait for PostgreSQL to boot and will self-apply Entity Framework migrations on startup.
+
 ```bash
 # Clone the repository
 git clone https://github.com/IUwU1/paytm-seat-reservation.git
@@ -72,4 +87,59 @@ docker-compose up --build
 # In a new terminal, run the concurrency test against the local deployment
 python Burst.py http://localhost:8080
 ```
+###  Manual API Verification (cURL)
+
+If an evaluator prefers to manually inspect the endpoints instead of running the automated test suite, they can use the following standard requests against the local Docker instance.
+
+**1. Check System Health & DB Readiness**
+Verifies that the ASP.NET Core process is running and the database connection is healthy.
+```bash
+curl -i http://localhost:8080/health/readiness
+```
+Expected Output: HTTP/1.1 200 OK (Healthy)
+2. Verify Prometheus Observability
+Confirms the metrics pipeline and custom counters are active and accessible anonymously.
+```bash
+curl -s http://localhost:8080/metrics | head -n 15
+```
+3. Create a Show (Admin Authorization)
+Creates an event with defined seats and pricing in paise.
+```bash
+curl -i -X POST http://localhost:8080/shows \
+  -H "Authorization: Bearer admin_secret" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Demo Show", "seats": ["A1", "A2", "A3", "A4"], "price_paise": 15000}'
+  ```
+Note: Copy the id from the JSON response to use in the requests below.
+4. Query Show State (Anonymous Read)
+Inspects the initial venue capacity and seat availability.
+```bash
+curl -s http://localhost:8080/shows/<SHOW_ID>
+```
+5. Reserve a Seat (User Booking)
+Executes a booking with an idempotency key.
+```bash
+curl -i -X POST http://localhost:8080/shows/<SHOW_ID>/reserve \
+  -H "Authorization: Bearer user_interviewer" \
+  -H "Content-Type: application/json" \
+  -d '{"seats": ["A1"], "idempotency_key": "demo-key-101"}'
+  ```
+6. Trigger Seat Collision (Concurrency Guard)
+Attempts to reserve the newly occupied seat to confirm immediate database lock rejection.
+```bash
+curl -i -X POST http://localhost:8080/shows/<SHOW_ID>/reserve \
+  -H "Authorization: Bearer user_another" \
+  -H "Content-Type: application/json" \
+  -d '{"seats": ["A1"], "idempotency_key": "demo-key-102"}'
+  ```
+Expected Output: HTTP/1.1 409 Conflict
+7. Test Idempotent Cache Replay
+Re-executes the exact payload from Step 5 to verify the idempotency cache returns the original response without double-booking.
+```bash
+curl -i -X POST http://localhost:8080/shows/<SHOW_ID>/reserve \
+  -H "Authorization: Bearer user_interviewer" \
+  -H "Content-Type: application/json" \
+  -d '{"seats": ["A1"], "idempotency_key": "demo-key-101"}'
+  ```
+Expected Output: HTTP/1.1 200 OK (Cached response returned).
 
