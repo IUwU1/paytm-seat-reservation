@@ -58,7 +58,7 @@ public class ReservationController : ControllerBase
         }
         
         var lockKey = $"res_{showId}_{userId}";
-        await _dbContext.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(hashtext({0}));", lockKey,cancellationToken);
+        await _dbContext.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(hashtext({0}));", lockKey);
         
         var currentSeatCount = await _dbContext.Seats.CountAsync(s => s.ShowId == showId && s.UserId == userId && s.Status != SeatStatus.Available);
         
@@ -78,12 +78,12 @@ public class ReservationController : ControllerBase
         await _dbContext.Database.ExecuteSqlRawAsync(@"
                 INSERT INTO ""Reservations"" (""Id"", ""ShowId"", ""UserId"", ""SeatCount"", ""AmountPaise"", ""Status"", ""CreatedAt"")
                 VALUES ({0}, {1}, {2}, {3}, {4}, {5}, NOW());",
-            reservationId, showId, userId, sortedSeats.Count, amountPaise, ReservationStatus.Confirmed,cancellationToken);
+            reservationId, showId, userId, sortedSeats.Count, amountPaise, ReservationStatus.Confirmed);
        
        await _dbContext.Database.ExecuteSqlRawAsync(@"
                 INSERT INTO ""IdempotencyRecords"" (""UserId"", ""IdempotencyKey"", ""RequestHash"", ""StatusCode"", ""ResponseBody"", ""CreatedAt"")
                 VALUES ({0}, {1}, {2}, {3}, {4}, NOW());",
-           userId, request.IdempotencyKey, requestHash, StatusCodes.Status201Created, JsonSerializer.Serialize(responseObj),cancellationToken);
+           userId, request.IdempotencyKey, requestHash, StatusCodes.Status201Created, JsonSerializer.Serialize(responseObj));
         
         var updatedRows = await _dbContext.Seats.Where(s =>
                 s.ShowId == showId && sortedSeats.Contains(s.SeatNumber) && s.Status == SeatStatus.Available)
