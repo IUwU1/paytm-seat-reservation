@@ -1,16 +1,22 @@
-#!/usr/bin/env bash
-set -e
+#!/bin/bash
 
-BASE_URL=${1:-"https://paytm-seat-reservation-production-84ff.up.railway.app"}
-echo "Setting up Python environment..."
+echo "🚀 Setting up Python environment..."
 
-# Create virtual env if it doesn't exist
-if [ ! -d ".venv" ]; then
+# Check if the actual activate file exists. If not, wipe any broken folder and rebuild.
+if [ ! -f ".venv/bin/activate" ]; then
+    echo "📦 Creating virtual environment..."
+    rm -rf .venv
     python3 -m venv .venv
 fi
 
+# Activate the virtual environment
 source .venv/bin/activate
-pip install -q httpx
 
-echo "Running burst script against $BASE_URL..."
-python Burst.py "$BASE_URL"
+# Ensure httpx is installed (silently)
+pip install httpx > /dev/null 2>&1
+
+# Capture the URL passed as an argument, or default to localhost
+TARGET_URL=${1:-"http://localhost:8080"}
+
+# Run the Python script
+python3 Burst.py "$TARGET_URL"
