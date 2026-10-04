@@ -14,17 +14,24 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U app_user -d  seat_reservation_db"]
+      test: ["CMD-SHELL","pg_isready -U app_user -d seat_reservation_db"]
       interval: 5s
       timeout: 5s
       retries: 5
-      
+  
   paytmreservationsystem:
     image: paytmreservationsystem
     build:
       context: .
-      dockerfile: src/PaytmReservationSystem/Dockerfile
-  
+      dockerfile: ./Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__defaultConnection=Host=postgres;Port=5432;Database=seat_reservation_db;Username=app_user;Password=app_password;Pooling=true;Minimum Pool Size=10;Maximum Pool Size=80;Connection Lifetime=300;Timeout=60;Command Timeout=10;
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   pgdata:
-
