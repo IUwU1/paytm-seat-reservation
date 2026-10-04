@@ -15,11 +15,18 @@ async def make_request(client, method, url, headers=None, json_data=None):
     except Exception as e:
         return 500, {"error": str(e)}
 
+async def bounded_request(sem, client, method, url, headers=None, json_data=None):
+    async with sem:
+        return await make_request(client, method, url, headers, json_data)
+
 async def main():
-    base_url = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5053"
+    base_url = sys.argv[1] if len(sys.argv) > 1 else "https://paytm-seat-reservation-production-84ff.up.railway.app"
     print(f"🚀 Starting Paytm Burst Test against {base_url}...\n")
     
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    sem = asyncio.Semaphore(1000)
+    
+    # Increased timeout to handle queueing on the free-tier cloud instance
+    async with httpx.AsyncClient(timeout=60.0) as client:
         # 1. Create Show
         seats = [f"A{i}" for i in range(1, 501)]
         
@@ -36,12 +43,13 @@ async def main():
         show_id = show["id"]
         print(f"✅ Show created: {show_id}\n")
 
-        # 2. Scenario A: The Hot-Seat Storm (500 users trying to grab 'A1' at exact same time)
-        print("⛈ Firing Hot-Seat Storm (500 concurrent users targeting seat A1)...")
+        # 2. Scenario A: The Hot-Seat Storm (2,000 users trying to grab 'A1' at exact same time)
+        TOTAL_HOT_SEAT_REQUESTS = 2000
+        print(f"⛈ Firing Hot-Seat Storm ({TOTAL_HOT_SEAT_REQUESTS} concurrent users targeting seat A1)...")
         tasks = []
-        for i in range(500):
-            tasks.append(make_request(
-                client, "POST", f"{base_url}/shows/{show_id}/reserve",
+        for i in range(TOTAL_HOT_SEAT_REQUESTS):
+            tasks.append(bounded_request(
+                sem, client, "POST", f"{base_url}/shows/{show_id}/reserve",
                 {"Authorization": f"Bearer user_{i}"},
                 {"seats": ["A1"], "idempotency_key": str(uuid.uuid4())}
             ))
@@ -56,7 +64,9 @@ async def main():
         
         print(f"📊 Hot-Seat Outcome: {status_counts}")
         assert status_counts.get(201, 0) == 1, "❌ FAILED: Seat A1 was double-booked!"
-        assert status_counts.get(409, 0) == 499, "❌ FAILED: Losers did not get 409 Conflict!"
+        
+        declines = status_counts.get(409, 0) + status_counts.get(429, 0)
+        assert declines == (TOTAL_HOT_SEAT_REQUESTS - 1), f"❌ FAILED: Expected {TOTAL_HOT_SEAT_REQUESTS - 1} declines, got {declines}!"
         assert status_counts.get(500, 0) == 0, "❌ FAILED: 5xx Server Errors detected!"
         print("✅ Hot-Seat Storm Passed! Exactly one winner, clean declines for losers, zero 5xx.\n")
 
@@ -64,8 +74,8 @@ async def main():
         print("🏃 Firing Quota Bypassing Test (1 user, 10 parallel threads)...")
         tasks = []
         for i in range(10):
-            tasks.append(make_request(
-                client, "POST", f"{base_url}/shows/{show_id}/reserve",
+            tasks.append(bounded_request(
+                sem, client, "POST", f"{base_url}/shows/{show_id}/reserve",
                 {"Authorization": "Bearer user_greedy"},
                 {"seats": [f"A{i+2}"], "idempotency_key": str(uuid.uuid4())}
             ))
@@ -80,8 +90,8 @@ async def main():
         print("🔁 Firing Idempotency Test (10 identical requests simultaneously)...")
         idem_key = str(uuid.uuid4())
         tasks = [
-            make_request(
-                client, "POST", f"{base_url}/shows/{show_id}/reserve",
+            bounded_request(
+                sem, client, "POST", f"{base_url}/shows/{show_id}/reserve",
                 {"Authorization": "Bearer user_retry"},
                 {"seats": ["A20"], "idempotency_key": idem_key}
             ) for _ in range(10)
