@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-BASE_URL=${1:-"http://localhost:5053"}
+BASE_URL=${1:-"https://paytm-seat-reservation-production-84ff.up.railway.app"}
 echo "Setting up Python environment..."
 
 # Create virtual env if it doesn't exist

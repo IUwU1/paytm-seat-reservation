@@ -20,7 +20,7 @@ async def bounded_request(sem, client, method, url, headers=None, json_data=None
         return await make_request(client, method, url, headers, json_data)
 
 async def main():
-    base_url = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5053"
+    base_url = sys.argv[1] if len(sys.argv) > 1 else "https://paytm-seat-reservation-production-84ff.up.railway.app/"
     print(f"🚀 Starting Paytm Burst Test against {base_url}...\n")
     
     sem = asyncio.Semaphore(1000)
