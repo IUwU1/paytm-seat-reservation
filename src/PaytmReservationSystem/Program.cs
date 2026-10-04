@@ -15,16 +15,14 @@ try
     builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
     builder.Services.AddProblemDetails();
     
-    builder.Host.UseSerilog((context, services, configuration) => configuration.ReadFrom
-        .Configuration(context.Configuration)
+    builder.Host.UseSerilog((context, services, configuration) => configuration
+        .ReadFrom.Configuration(context.Configuration)
         .ReadFrom.Services(services)
         .Enrich.FromLogContext()
-        //.Enrich.WithCorrelationId() 
-        .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [TraceId: {TraceId}] {Message:lj}{NewLine}{Exception}"));
+        .WriteTo.Console(new Serilog.Formatting.Json.JsonFormatter()));
     
     
     var connectionString = builder.Configuration.GetConnectionString("defaultConnection");
-    Log.Information(connectionString);
     
  builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString, npgsqlOptions => 
