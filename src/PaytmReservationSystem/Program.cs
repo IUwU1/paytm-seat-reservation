@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using PaytmReservationSystem.Data;
 using PaytmReservationSystem.Infrastructure;
 using PaytmReservationSystem.Security;
+using Prometheus;
 
 Log.Logger = new  LoggerConfiguration().WriteTo.Console().CreateBootstrapLogger();
 
@@ -19,8 +20,13 @@ try
     var connectionString = builder.Configuration.GetConnectionString("defaultConnection");
     Log.Information(connectionString);
     
-    builder.Services.AddDbContext<AppDbContext>(options =>
-        options.UseNpgsql(connectionString));
+ builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(connectionString, npgsqlOptions => 
+    {
+        npgsqlOptions.MaxBatchSize(100); 
+    }));
+    
+    builder.Services.AddHealthChecks().AddNpgSql(connectionString,name: "postgres instance",tags: new [] { "ready"});
     
     builder.Services.AddAuthentication("Bearer").AddScheme<TokenAuthenticationSchemeOptions,TokenAuthHandler >("Bearer", null);
 
@@ -49,6 +55,20 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
     app.MapControllers();
+
+    app.UseHttpMetrics();
+    app.MapMetrics();
+    
+    //for checking if the host is running
+    app.MapHealthChecks("/health/liveness", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+    {
+        Predicate = _ => false 
+    });
+    
+    app.MapHealthChecks("/health/readiness", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+    {
+        Predicate = check => check.Tags.Contains("ready") // Checks database connectivity
+    });
     
     app.Run();
 }

@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PaytmReservationSystem.Contracts;
 using PaytmReservationSystem.Data;
+using PaytmReservationSystem.Infrastructure;
 using PaytmReservationSystem.Models;
 
 namespace PaytmReservationSystem.Controllers;
@@ -16,10 +17,10 @@ namespace PaytmReservationSystem.Controllers;
 [Authorize]
 public class ReservationController : ControllerBase
 {
-    private readonly ILogger<ShowController> _logger;
+    private readonly ILogger<ShowsController> _logger;
     private readonly AppDbContext _dbContext;
     
-    public ReservationController(AppDbContext dbContext, ILogger<ShowController> logger)
+    public ReservationController(AppDbContext dbContext, ILogger<ShowsController> logger)
     {
         _logger = logger;
         _dbContext = dbContext;
@@ -56,6 +57,7 @@ public class ReservationController : ControllerBase
                 var cachedResponse = JsonSerializer.Deserialize<ReserveSeatsResponse>(idempotency.ResponseBody);
                 return StatusCode(idempotency.StatusCode, cachedResponse);
             }
+            MetricsRegistry.ReservationsDeclinedTotal.WithLabels("idempotentcy_key_replay").Inc();
             return Conflict(new { reason = "idempotentcy_key_replay" });
         }
 
@@ -66,7 +68,7 @@ public class ReservationController : ControllerBase
 
         if (currentSeatCount + sortedSeats.Count > 4)
         {
-            
+            MetricsRegistry.ReservationsDeclinedTotal.WithLabels("ticket_limit_exceeded").Inc();
             return Conflict(new { reason = "ticket_limit_exceeded" });
         }
         
@@ -81,6 +83,7 @@ public class ReservationController : ControllerBase
 
         if (updatedRows != sortedSeats.Count)
         {
+            MetricsRegistry.ReservationsDeclinedTotal.WithLabels("some_seat_taken").Inc();
             return Conflict(new { reason = "some_seat_taken" });
         }
         
@@ -112,7 +115,10 @@ public class ReservationController : ControllerBase
         
         await _dbContext.SaveChangesAsync();
         await transaction.CommitAsync();
-
+        
+        MetricsRegistry.SeatsAvailable.WithLabels(showId.ToString()).Dec(sortedSeats.Count);
+        MetricsRegistry.ReservationsConfirmedTotal.Inc(sortedSeats.Count);
+        
         return Created($"/shows/{showId}", responseObj);
 
 

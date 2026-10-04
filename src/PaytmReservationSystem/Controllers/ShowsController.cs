@@ -3,18 +3,19 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PaytmReservationSystem.Contracts;
 using PaytmReservationSystem.Data;
+using PaytmReservationSystem.Infrastructure;
 using PaytmReservationSystem.Models;
 
 namespace PaytmReservationSystem.Controllers;
 
 [ApiController]
 [Route("[controller]")]
-public class ShowController : ControllerBase
+public class ShowsController : ControllerBase
 {
-    private readonly ILogger<ShowController> _logger;
+    private readonly ILogger<ShowsController> _logger;
     private readonly AppDbContext _dbContext;
     
-    public ShowController(ILogger<ShowController> logger, AppDbContext dbContext)
+    public ShowsController(ILogger<ShowsController> logger, AppDbContext dbContext)
     {
         _logger = logger;
         _dbContext = dbContext;
@@ -53,12 +54,15 @@ public class ShowController : ControllerBase
         await  _dbContext.SaveChangesAsync();
         
         _logger.LogInformation("Changes saved to Db Context");
+        MetricsRegistry.SeatsAvailable.WithLabels(show.Id.ToString()).Set(distinctSeats.Count);
         
-        return CreatedAtAction(nameof(GetShow), new { 
+        return Created($"/shows/{show.Id}", new
+        {
             id = show.Id,
             name = show.Name,
             total_seats = show.TotalSeats,
-            price_paise = show.PricePaise});
+            price_paise = show.PricePaise
+        });
     }
 
     [HttpGet("{id}")]
