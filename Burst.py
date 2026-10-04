@@ -73,17 +73,6 @@ async def main():
         print("✅ Quota Passed! Advisory lock correctly stopped concurrent limit bypassing.\n")
 
         # 4. Scenario C: Idempotent Retries
-        #print("🔁 Firing Idempotency Test (10 identical requests simultaneously)...")
-        #idem_key = str(uuid.uuid4())
-        #tasks = [make_request(client, "POST", f"{base_url}/shows/{show_id}/reserve",
-        #        {"Authorization": "Bearer user_retry"},
-        #        {"seats": ["A20"], "idempotency_key": idem_key}) for _ in range(10)]
-        
-        #results = await asyncio.gather(*tasks)
-        #idem_success = sum(1 for code, _ in results if code == 201)
-        #print(f"📊 Idempotency Outcome: {idem_success} executed, {10 - idem_success} cached/declined.")
-        #assert idem_success == 1, "❌ FAILED: Idempotent request executed multiple times!"
-        #print("✅ Idempotency Passed!\n")
         
         print("🔁 Firing Idempotency Test (10 identical requests simultaneously)...")
         idem_key = str(uuid.uuid4())
@@ -104,9 +93,21 @@ async def main():
         
         print("✅ Idempotency Passed!\n")
         
+        #5. Idempotency Payload Mismatch
+        print("🕵️ Firing Idempotency Mismatch Test (Same Key, Different Seats)...")
+        status, response = await make_request(client, "POST", f"{base_url}/shows/{show_id}/reserve",
+                    {"Authorization": "Bearer user_retry"},
+                    {"seats": ["A21"], "idempotency_key": idem_key} # Using the same key from Scenario C, but different seat
+        )
+                
+        print(f"📊 Mismatch Outcome: {status} {response}")
+        assert status == 409, f"❌ FAILED: Expected 409 Conflict for mismatched body, got {status}"
+        assert response.get("reason") == "idempotentcy_key_replay", "❌ FAILED: Incorrect decline reason"
+        print("✅ Idempotency Mismatch Passed!\n")
+        
         
 
-        # 5. Invariant & State Check
+        # 6. Invariant & State Check
         print("🔍 Checking final state invariant...")
         status, state = await make_request(client, "GET", f"{base_url}/shows/{show_id}", {})
         counts = state.get("counts", {})
