@@ -84,7 +84,10 @@ cd paytm-seat-reservation
 # Build and start the API and Database containers
 docker-compose up --build
 
-# In a new terminal, run the concurrency test against the local deployment
+# In a new terminal, run the concurrency test against the local deployment via the script
+./Burst.sh  http://localhost:8080
+
+# Or run the python test file directly
 python Burst.py http://localhost:8080
 ```
 ###  Manual API Verification (cURL)

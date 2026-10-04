@@ -1,10 +1,10 @@
 #!/bin/bash
 
-echo "🚀 Setting up Python environment..."
+echo "Setting up Python environment..."
 
 # Check if the actual activate file exists. If not, wipe any broken folder and rebuild.
 if [ ! -f ".venv/bin/activate" ]; then
-    echo "📦 Creating virtual environment..."
+    echo "Creating virtual environment..."
     rm -rf .venv
     python3 -m venv .venv
 fi
